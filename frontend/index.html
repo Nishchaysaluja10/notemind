@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoteMind - Local LLM</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body {
+            font-family: system-ui;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background: #f9f9f9;
+        }
+
+        .card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
+        }
+
+        textarea,
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .autocomplete {
+            color: #888;
+            font-size: 0.9em;
+            margin-top: -5px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .context-box {
+            background: #f1f1f1;
+            padding: 1rem;
+            font-size: 0.85em;
+            border-left: 3px solid #2196F3;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <h2>🧠 NoteMind: Chat with your Notes</h2>
+
+        <div class="card">
+            <h3>1. Add Context (Ingestion & Indexing)</h3>
+            <textarea v-model="newNote" rows="4" placeholder="Paste your notes here..."></textarea>
+            <button @click="addNote" :disabled="loading">Add Note</button>
+            <p v-if="sysMessage">{{ sysMessage }}</p>
+        </div>
+
+        <div class="card">
+            <h3>2. Ask a Question (RAG Pipeline)</h3>
+            <input type="text" v-model="query" @input="checkAutocomplete" placeholder="Ask something...">
+            <span class="autocomplete" v-if="suggestion">Suggestion: {{ suggestion }}</span>
+            <button @click="askQuestion" :disabled="loading">Generate Answer</button>
+        </div>
+
+        <div class="card" v-if="answer">
+            <h3>Answer (LLM)</h3>
+            <p>{{ answer }}</p>
+            <div class="context-box">
+                <strong>Retrieved Context (BM25 + Transformers):</strong>
+                <ul>
+                    <li v-for="ctx in contexts" :key="ctx">{{ ctx }}</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://localhost:8000"; // Update this when deployed to Hugging Face Spaces
+
+        const { createApp, ref } = Vue;
+
+        createApp({
+            setup() {
+                const newNote = ref('');
+                const query = ref('');
+                const sysMessage = ref('');
+                const suggestion = ref('');
+                const answer = ref('');
+                const contexts = ref([]);
+                const loading = ref(false);
+
+                const addNote = async () => {
+                    loading.value = true;
+                    try {
+                        await fetch(`${API_URL}/add_note`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text: newNote.value })
+                        });
+                        sysMessage.value = "Note added! N-gram, BM25, and FAISS updated.";
+                        newNote.value = '';
+                    } catch (e) { sysMessage.value = "Error connecting to backend."; }
+                    loading.value = false;
+                };
+
+                const checkAutocomplete = async () => {
+                    if (query.value.trim().split(' ').length >= 2) {
+                        try {
+                            const res = await fetch(`${API_URL}/autocomplete?q=${encodeURIComponent(query.value)}`);
+                            const data = await res.json();
+                            suggestion.value = data.suggestion !== query.value ? data.suggestion : '';
+                        } catch (e) {
+                            suggestion.value = '';
+                        }
+                    } else {
+                        suggestion.value = '';
+                    }
+                };
+
+                const askQuestion = async () => {
+                    loading.value = true;
+                    answer.value = "Generating...";
+                    try {
+                        const res = await fetch(`${API_URL}/chat`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query: query.value })
+                        });
+                        const data = await res.json();
+                        answer.value = data.answer;
+                        contexts.value = data.context_used;
+                    } catch (e) { answer.value = "Failed to generate answer."; }
+                    loading.value = false;
+                };
+
+                return { newNote, query, sysMessage, suggestion, answer, contexts, loading, addNote, checkAutocomplete, askQuestion };
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
